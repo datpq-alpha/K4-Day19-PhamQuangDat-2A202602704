@@ -2,7 +2,7 @@
 
 **Họ tên:** Phạm Quang Đạt  **MSSV:** 2A202602704  **Ngày:** 05/10/2026
 
-> Số liệu dưới đây được lấy từ `ket_qua_benchmark_kg.txt`. Không chạy lại benchmark trong quá trình hoàn thiện báo cáo.
+> Số liệu dưới đây được lấy từ `ket_qua_benchmark_kg.txt`.
 
 ## 1. Chi phí (10 điểm)
 
@@ -50,11 +50,11 @@ Trên riêng ba câu `cross-kb` Q3–Q5, recall trung bình của Flat RAG là *
 ### Lỗi E2: Thiếu ngữ cảnh luật
 
 - **Hiện tượng:** Q4 xác định đúng hành vi “tổ chức sử dụng trái phép chất ma túy” nhưng không trả lời được mức phạt tối đa.
-- **Bằng chứng:** Kết quả GraphRAG:
+- **Bằng chứng:** Trong `ket_qua_benchmark_kg.txt`, Q4 GraphRAG có `recall=0.33`, `judge=1` và trả lời:
 
   > Giang hồ 'Hoàng Nato' bị bắt về hành vi tổ chức sử dụng trái phép chất ma túy. Tuy nhiên, trong ngữ cảnh hiện tại không đủ thông tin để xác định mức phạt tù tối đa cho hành vi này theo Bộ luật Hình sự.
 
-  Đáp án chuẩn yêu cầu Điều 255 và “20 năm hoặc tù chung thân”. Điều 255 khoản 4 chứa mức phạt này, nhưng không nhắc tên chất ma túy cụ thể.
+  Trong `benchmark_kg.json`, gold và `must_include` yêu cầu Điều 255 và “chung thân”. Điều 255 khoản 4 quy định mức cao nhất là 20 năm hoặc tù chung thân, nhưng khoản này không nhắc tên một chất ma túy cụ thể.
 
   ```cypher
   MATCH (k:Case)-[:CHARGED_WITH]->(c:Crime)
@@ -66,24 +66,46 @@ Trên riêng ba câu `cross-kb` Q3–Q5, recall trung bình của Flat RAG là *
 - **Nguyên nhân:** `context()` chỉ giữ khoản 1 và các khoản có `MENTIONS` một `Substance` mà vụ án `INVOLVES`. Điều 255 khoản 4 không có `MENTIONS` chất, nên bị loại khỏi context.
 - **Đề xuất sửa:** với câu hỏi có từ khóa “tối đa”, “cao nhất”, “chung thân” hoặc “tử hình”, giữ thêm khoản có mức phạt cao nhất của Article tương ứng. Đổi lại, prompt dài hơn và tăng input token.
 
-### Lỗi E5: LLM lệch với graph
+### Lỗi E4: Phép đo chưa phản ánh đúng mức độ nghiêm trọng của lỗi
 
-- **Hiện tượng:** Q5 lấy đúng nhiều dữ kiện nhưng ghi sai điều luật: câu trả lời nêu Điều 251, trong khi tội vận chuyển phải nối tới Điều 250.
-- **Bằng chứng:** Kết quả GraphRAG ghi:
+- **Hiện tượng:** Q5 GraphRAG đạt recall khá cao (`0.80`) dù câu trả lời sai một dữ kiện pháp lý cốt lõi; đồng thời Q6 Flat RAG có recall `0.00` nhưng judge vẫn cho `1`.
+- **Bằng chứng:** Q5 GraphRAG trả lời:
 
   > Cái Quang Huy bị truy tố về tội "vận chuyển trái phép chất ma túy" ... khoản 4 của Điều 251 ...
 
-  Trong `benchmark_kg.json`, đáp án chuẩn là khoản 4 Điều 250.
+  Trong `benchmark_kg.json`, đáp án đúng là khoản 4 **Điều 250**, không phải Điều 251. Tuy nhiên, bốn chuỗi còn lại trong `must_include` vẫn xuất hiện (`vận chuyển`, `MDMA`, `khoản 4`, `tử hình`), nên recall đạt 4/5 = 0.80. Judge cho `1`, phản ánh đây chỉ là câu trả lời đúng một phần.
 
-- **Nguyên nhân:** câu hỏi nhắc `MDMA`, một Substance dùng chung cho nhiều vụ. Cơ chế seed có thể mở rộng sang nhiều Case liên quan MDMA và đưa nhiều Article vào context. LLM sau đó chọn nhầm Article 251 dù tội danh “vận chuyển” phải liên kết với Article 250.
-- **Đề xuất sửa:** ưu tiên Article đi qua đúng `Case -[:CHARGED_WITH]-> Crime -[:DEFINES]-> Article`; chỉ thêm Article khác khi câu hỏi thật sự yêu cầu tổng hợp. Có thể ghi rõ trong facts quan hệ tội danh–điều luật để giảm nhầm lẫn. Đổi lại, truy vấn Cypher phức tạp hơn nhưng context chính xác hơn.
+  Ở Q6 Flat RAG, recall bằng 0 vì không có đúng các chuỗi “Cái Quang Huy”, “Lê Minh Thành”, “Pháp y tâm thần”, nhưng judge vẫn cho `1` vì câu trả lời có nhắc đến ba nhóm sự việc bằng các cách gọi “Đức”, “Thành”, “Đông”.
 
-### Lỗi E4: Phép đo chưa phản ánh hoàn toàn chất lượng ngữ nghĩa
+- **Nguyên nhân:** recall đang coi mỗi chuỗi trong `must_include` có trọng số ngang nhau và chỉ kiểm tra sự xuất hiện của chuỗi. Vì vậy một lỗi pháp lý quan trọng như sai số Điều chỉ làm mất 1/5 điểm, trong khi cách gọi tắt tên người lại có thể làm mất toàn bộ recall. Judge đánh giá ngữ nghĩa tổng thể nên cho kết quả khác.
+- **Đề xuất sửa:** gán trọng số cao hơn cho dữ kiện pháp lý quyết định như số Điều/khoản, đồng thời chuẩn hóa alias thực thể trước khi tính recall. Nên giữ judge để bổ sung đánh giá ngữ nghĩa; đổi lại phép đo sẽ phức tạp hơn và cần cấu hình trọng số cho từng câu.
 
-- **Hiện tượng:** Q6 của Flat RAG có `recall=0.00` nhưng `judge=1.00`; câu trả lời có nêu các vụ liên quan MDMA nhưng không dùng đúng các tên bắt buộc trong `must_include`.
-- **Bằng chứng:** Flat RAG nêu “vụ việc của Đức”, “vụ việc của Thành” và “vụ việc của Đông”, trong khi `must_include` yêu cầu “Cái Quang Huy”, “Lê Minh Thành” và “Pháp y tâm thần”.
-- **Nguyên nhân:** `recall` kiểm tra chuỗi bắt buộc nên nhạy với cách gọi tắt/biệt danh; `judge` đánh giá ngữ nghĩa rộng hơn. Hai phép đo đang đo hai khía cạnh khác nhau.
-- **Đề xuất sửa:** giữ `recall` để kiểm tra độ bao phủ chính xác, nhưng bổ sung alias chuẩn hóa hoặc đánh giá entity-level trước khi kết luận câu trả lời sai hoàn toàn. Không nên bỏ `must_include`, vì alias quá rộng có thể làm tăng điểm giả.
+### Lỗi E5: Câu trả lời aggregation lệch khỏi tập thực thể cần tổng hợp
+
+- **Hiện tượng:** Q6 GraphRAG lấy được ba nhóm sự việc liên quan MDMA nhưng không nêu đúng hai thực thể mà benchmark yêu cầu, đồng thời thêm các Điều luật không được hỏi.
+- **Bằng chứng:** Trong `ket_qua_benchmark_kg.txt`, Q6 GraphRAG có `recall=0.33`, `judge=1` và trả lời ba mục: (1) Cái Quang Huy, (2) “Ba thanh niên góp tiền mua ma túy”, (3) Lê Văn Đông tại Sầm Sơn. Câu trả lời còn thêm Điều 249, 250, 251 và 252.
+
+  Trong `benchmark_kg.json`, ba thực thể bắt buộc là:
+
+  ```text
+  Cái Quang Huy; Lê Minh Thành; Pháp y tâm thần
+  ```
+
+  Chỉ “Cái Quang Huy” xuất hiện nguyên văn, nên recall là 1/3 = 0.33. “Ba thanh niên” thuộc vụ có Lê Minh Thành nhưng LLM bỏ tên cầu nối cần báo cáo; mục Lê Văn Đông/Sầm Sơn chỉ mô tả một phần của nhóm vụ Viện Pháp y tâm thần và không gọi đúng thực thể chuẩn. Các Điều luật 249–252 là thông tin thừa so với câu hỏi “những vụ việc nào”.
+
+  Truy vấn Cypher đối chứng trực tiếp cho Q6 nên là:
+
+  ```cypher
+  MATCH (k:Case)-[:INVOLVES]->(:Substance {name:'MDMA'})
+  OPTIONAL MATCH (p:Person)-[:INVOLVED_IN]->(k)
+  RETURN DISTINCT k.name, k.doc_id,
+         collect(DISTINCT p.name) AS people,
+         k.summary
+  ORDER BY k.name;
+  ```
+
+- **Nguyên nhân:** bước trả lời bằng LLM đã tóm tắt các Case theo mô tả chung thay vì giữ tên thực thể `Person`/nguồn vụ án trong facts; context còn đưa các khoản luật liên quan MDMA vào prompt dù Q6 chỉ yêu cầu tổng hợp vụ việc. Vì vậy câu trả lời vừa thiếu tên chuẩn vừa có dữ kiện luật thừa. File kết quả chỉ ghi một lần chạy nên chưa đủ bằng chứng để kết luận lỗi này có lặp lại ổn định giữa nhiều lần benchmark.
+- **Đề xuất sửa:** trong `Neo4jGraph.context`, nhận diện câu hỏi aggregation và tạo facts theo từng Case với `case name`, `doc_id`, danh sách Person và summary; không mở rộng sang Article/Clause nếu câu hỏi không hỏi luật. Trong prompt trả lời, yêu cầu giữ nguyên tên thực thể từ facts và liệt kê đủ các Case trước khi diễn giải. Đánh đổi là cần thêm nhánh Cypher theo loại câu hỏi và prompt dài hơn khi có nhiều Case.
 
 ## 4. Kết luận (5 điểm)
 
@@ -108,13 +130,9 @@ $ python bench_kg.py --check
 
 Ảnh Neo4j:
 
-- [Q-A — ảnh gốc](img/Q-A.png)
-- [Q-B — ảnh gốc](img/Q-B.png)
-- [Q-C — ảnh gốc](img/Q-C.png)
-- [Q-D — ảnh gốc](img/Q-D.png)
-- [Q-A — file nộp Q-A](img/kg_count.png)
-- [Q-B — file nộp Q-B](img/kg_cross_kb.png)
-- [Q-D — file nộp Q-D](img/kg_my_case.png)
+- [Q-A](img/kg_count.png)
+- [Q-B](img/kg_cross_kb.png)
+- [Q-D](img/kg_my_case.png)
 
 Tên người đã chọn cho `kg_my_case.png`: **Dương Minh Tuấn** (doc_id: `news-100260920221957595`).
 
